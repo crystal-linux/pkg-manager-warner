@@ -1,0 +1,17 @@
+# This is an example configuration which is also used by default on crystal installations
+proper_manager = "ame"
+
+[apt]
+distro = "Ubuntu/Debian (based Distros)"
+
+[apt-get]
+distro = "Ubuntu/Debian (based Distros)"
+
+[dnf]
+distro = "fedora"
+
+[zypper]
+distro = "OpenSuse"
+
+[yum]
+distro = "rhel (based)"
