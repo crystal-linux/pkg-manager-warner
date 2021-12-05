@@ -1,6 +1,7 @@
 use toml::{Value};
 use std::{fs, env};
 use std::io::Write;
+use std::process::Command;
 
 pub fn help() {
     println!("Usage:
@@ -79,8 +80,12 @@ pub fn create_script() {
         format!("SELECT mngr FROM pkg_mngrs WHERE mngr IS NOT \"proper_manager\";"),
         |pairs| {
             for &(_column, value) in pairs.iter() {
-                println!("{}", value.unwrap());
                 writeln!(&mut fs::File::create(format!("/usr/bin/{}",value.unwrap())).unwrap(), "#!/usr/bin/env bash\n pkg-warner -w {}", value.unwrap()).unwrap();
+                Command::new("chmod")
+                    .arg("+x")
+                    .arg(format!("/usr/bin/{}", value.unwrap()))
+                    .status()
+                    .expect("Failed to chmod script");
             }
             true
         },
