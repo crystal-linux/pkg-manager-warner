@@ -1,4 +1,4 @@
-use toml::{Value, toml};
+use toml::{Value};
 use std::{fs, env};
 use std::io::Write;
 
@@ -13,7 +13,6 @@ pub fn help() {
 }
 
 pub fn create_database() {
-    let homepath = env::var("HOME").unwrap();
     let file = "/usr/share/pkg_warner/pkg_mngrs.db".to_string();
     if !std::path::Path::new(&"/usr/share/pkg_warner/").is_dir() {
         let _cdar = fs::create_dir_all("/usr/share/pkg_warner/".to_string());
@@ -30,7 +29,7 @@ pub fn create_database() {
     let result = connection
         .execute(
             "
-        CREATE TABLE pkg_mngrs (mngr TEXT, distro TEXT);
+        CREATE TABLE pkg_mngrs (mngr TEXT, distro TEXT, UNIQUE (mngr, distro));
         ",
         );
     match result {
@@ -45,6 +44,17 @@ pub fn create_database() {
 
 pub fn add_mngrs(pkg_managers: Vec<Vec<String>>, proper_manager: String) {
     let connection = sqlite::open("/usr/share/pkg_warner/pkg_mngrs.db".to_string()).unwrap();
+    let result = connection.execute(format!(
+        "INSERT INTO pkg_mngrs (mngr,distro) VALUES (\"{}\",\"{}\")",
+    "proper_manager", proper_manager));
+    match result {
+        Ok(_) => {
+            println!("Added {} to database", proper_manager);
+        }
+        Err(_) => {
+            println!("Couldn't add {} to database, maybe it already exists?", proper_manager);
+        }
+    }
     for entry in pkg_managers {
         println!("Don't use {}! {} is used on {}, here you use {}!", entry[0], entry[0], entry[1], proper_manager);
         let result = connection.execute(format!(
@@ -57,7 +67,7 @@ pub fn add_mngrs(pkg_managers: Vec<Vec<String>>, proper_manager: String) {
                 println!("Added {} to database", entry[0]);
             }
             Err(_) => {
-                println!("Couldn't add {} to database", entry[0]);
+                println!("Couldn't add {} to database, maybe it already exists?", entry[0]);
             }
         }
     }
@@ -69,6 +79,7 @@ pub fn create_script() {
         format!("SELECT mngr FROM pkg_mngrs WHERE mngr IS NOT \"proper_manager\";"),
         |pairs| {
             for &(_column, value) in pairs.iter() {
+                println!("{}", value.unwrap());
                 writeln!(&mut fs::File::create(format!("/usr/bin/{}",value.unwrap())).unwrap(), "#!/usr/bin/env bash\n pkg-warner -w {}", value.unwrap()).unwrap();
             }
             true
@@ -79,6 +90,50 @@ pub fn create_script() {
         Err(_) => println!("Couldn't get value from database"),
     }
 
+}
+
+pub fn dump_database() -> Vec<String> {
+    let connection = sqlite::open("/usr/share/pkg_warner/pkg_mngrs.db").unwrap();
+    let mut dump = Vec::new();
+    let result = connection.iterate(
+        format!("SELECT mngr FROM pkg_mngrs WHERE mngr IS NOT \"proper_manager\";"),
+        |pairs| {
+            for &(_column, value) in pairs.iter() {
+                dump.push(value.unwrap().to_string());
+            }
+            true
+        },
+    );
+    match result {
+        Ok(_) => {}
+        Err(_) => println!("Couldn't get value from database"),
+    }
+    return dump;
+}
+
+pub fn rem_mngr(mngrs_to_remove: Vec<String>) {
+    let connection = sqlite::open("/usr/share/pkg_warner/pkg_mngrs.db").unwrap();
+    for mngr in mngrs_to_remove {
+        let result = fs::remove_file(format!("/usr/bin/{}", mngr));
+        match result {
+            Ok(_) => {
+                println!("Removed {}", mngr);
+            }
+            Err(_) => {
+                println!("Couldn't remove {}", mngr);
+            }
+        }
+        let result = connection.execute(format!(
+            "DELETE FROM pkg_mngrs WHERE mngr = \"{}\"", mngr));
+        match result {
+            Ok(_) => {
+                println!("Removed {} from database", mngr);
+            }
+            Err(_) => {
+                println!("Couldn't remove {} from database", mngr);
+            }
+        }
+    }
 }
 
 pub fn warn(proper_manager: String, package_manager: String) {
@@ -123,35 +178,36 @@ fn main() {
     }
 
     let file = format!("/etc/package_managers.toml");
-    let mut database = String::new();
-    database = fs::read_to_string(file).expect("Unable to read file");
+    let database = fs::read_to_string(file).expect("Unable to read file");
     let db_parsed = database.parse::<Value>().expect("Unable to parse database");
     let mut pkg_managers: Vec<Vec<String>> = Vec::new();
+    let proper_manager = db_parsed["proper_manager"].as_str().unwrap().to_string();
     for entry in db_parsed.as_table() {
         for (key, value) in &*entry {
             let mut tempvec = Vec::new();
             tempvec.push(key.to_string());
             tempvec.push(value.to_string().replace("distro = ", "").replace("\n","").replace("\"",""));
-            pkg_managers.push(tempvec);
+            if !tempvec.contains(&proper_manager) {
+                pkg_managers.push(tempvec);
+            }
+            
         }
     }
     
-    let connection = sqlite::open("/usr/share/pkg_warner/pkg_mngrs.db").unwrap();
-    let mut proper_manager = String::new();
-    let mut found = false;
-    let result = connection.iterate(
-        format!("SELECT distro FROM pkg_mngrs WHERE mngr = \"proper_manager\";"),
-        |pairs| {
-            for &(_column, value) in pairs.iter() {
-                if !found {
-                    proper_manager.push_str(value.unwrap());
-                    found = true;
-                }
+    let dat_mgrs = dump_database();
+    let mut pkgs_to_remove: Vec<String> = Vec::new();
+    for i in dat_mgrs {
+        let mut in_conf = false;
+        for managers in &pkg_managers {
+            if managers.contains(&&i) {
+                in_conf = true;
             }
-            true
-        },
-    );
-    
+        }
+        if !in_conf {
+            pkgs_to_remove.push(i);
+        }
+    }
+
     match oper.as_str() {
         "-i" | "init" => {
             create_database();
@@ -166,6 +222,12 @@ fn main() {
         }
         "-w" | "warning" => {
             warn(proper_manager, args[1].to_string());
+        }
+        "-r" | "remove" => {
+            if !pkgs_to_remove.is_empty() {
+                println!("Removing {} from database", pkgs_to_remove.join(", "));
+                rem_mngr(pkgs_to_remove);
+            }
         }
         _ => {
             help();
