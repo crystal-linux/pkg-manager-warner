@@ -29,7 +29,7 @@ pub fn create_database() {
     let result = connection
         .execute(
             "
-        CREATE TABLE pkg_mngrs (mngr TEXT, distro TEXT, UNIQUE (mngr, distro));
+        CREATE TABLE pkg_mngrs (mngr TEXT, distro TEXT, UNIQUE (mngr));
         ",
         );
     match result {
