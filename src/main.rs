@@ -76,31 +76,12 @@ pub fn add_mngrs(pkg_managers: Vec<Vec<String>>, proper_manager: String) {
 
 pub fn create_script() {
     let connection = sqlite::open("/usr/share/pkg_warner/pkg_mngrs.db").unwrap();
-    let path = std::path::Path::new("/usr/share/pkg_warner/backs/");
     let result = connection.iterate(
         format!("SELECT mngr FROM pkg_mngrs WHERE mngr IS NOT \"proper_manager\";"),
         |pairs| {
             for &(_column, value) in pairs.iter() {
                 if std::path::Path::new(&format!("/usr/bin/{}", value.unwrap())).exists() {
-                    if !path.is_dir() {
-                        let result = std::fs::create_dir_all("/usr/share/pkg_warner/backs/".to_string());
-                        match result {
-                            Ok(_) => {
-                                println!("Created path for binary backups (previously missing)");
-                            }
-                            Err(_) => {
-                                println!("Couldn't create path for binary backups (/usr/share/pkg_warner/backs)")
-                            }
-                        }
-                    }
-                    let result = std::fs::copy(&format!("/usr/bin/{}", value.unwrap()), &format!("/usr/share/pkg_warner/backs/{}", value.unwrap()));
-                    match result {
-                        Ok(_) => {
-                        }
-                        Err(_) => {
-                            println!("Couldn't back up {}", value.unwrap());
-                        }
-                    }
+                    println!("Skipped {}, as it already exists", value.unwrap());
                 }
                 writeln!(&mut fs::File::create(format!("/usr/bin/{}",value.unwrap())).unwrap(), "#!/usr/bin/env bash\n pkg-warner -w {}", value.unwrap()).unwrap();
                 Command::new("chmod")
